@@ -10,28 +10,30 @@ for d in "${DIRS[@]}"; do [ -f "$d/index.html" ] && WEB="$d" && break; done
 cat > "$WEB/quality-labels.js" <<'EOF'
 (function () {
   const MAP = [[40,'4K'],[15,'1440p'],[8,'1080p'],[4,'720p'],[1.5,'480p'],[0.5,'360p'],[0,'240p']];
-  const RE = /^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\s*$|^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\b(?!\))/i;
-  const SCOPE = '.actionSheetContent, .dialog, .formDialogContent, .playbackSettingsContainer, .videoOsdBottom';
+  const EXACT = /^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\s*$/i;
 
-  function label(text) {
-    const m = text.match(RE);
-    if (!m) return null;
-    const num = m[1] || m[3], unit = m[2] || m[4];
-    let mbps = parseFloat(num);
-    if (/kbps/i.test(unit)) mbps /= 1000;
-    return `${MAP.find(([min]) => mbps >= min)[1]} (${num} ${unit})`;
+  function inQualityRow(node) {
+    let el = node.parentElement;
+    for (let i = 0; el && i < 4; i++, el = el.parentElement) {
+      if (/^\s*Quality\b/i.test(el.textContent)) return true;
+    }
+    return false;
   }
 
   function fix() {
-    document.querySelectorAll('select.selectVideoQuality option').forEach(o => {
-      const t = label(o.textContent); if (t) o.textContent = t;
-    });
-    document.querySelectorAll(SCOPE).forEach(scope => {
-      scope.querySelectorAll('*').forEach(el => {
-        if (el.children.length) return;
-        const t = label(el.textContent);
-        if (t) el.textContent = t;
-      });
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      if (EXACT.test(n.nodeValue)) hits.push(n);
+    }
+    hits.forEach(n => {
+      const isOption = n.parentElement && n.parentElement.tagName === 'OPTION';
+      if (!isOption && !inQualityRow(n)) return;
+      const m = n.nodeValue.match(EXACT);
+      let mbps = parseFloat(m[1]);
+      if (/kbps/i.test(m[2])) mbps /= 1000;
+      n.nodeValue = `${MAP.find(([min]) => mbps >= min)[1]} (${m[1]} ${m[2]})`;
     });
   }
 
