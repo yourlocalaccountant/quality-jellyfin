@@ -10,25 +10,38 @@ for d in "${DIRS[@]}"; do [ -f "$d/index.html" ] && WEB="$d" && break; done
 cat > "$WEB/quality-labels.js" <<'EOF'
 (function () {
   const MAP = [[40,'4K'],[15,'1440p'],[8,'1080p'],[4,'720p'],[1.5,'480p'],[0.5,'360p'],[0,'240p']];
-  const RE = /^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\b(.*)$/i;
+  const RE = /^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\s*$|^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\b(?!\))/i;
+  const SCOPE = '.actionSheetContent, .dialog, .formDialogContent, .playbackSettingsContainer, .videoOsdBottom';
+
   function label(text) {
     const m = text.match(RE);
     if (!m) return null;
-    let mbps = parseFloat(m[1]);
-    if (/kbps/i.test(m[2])) mbps /= 1000;
-    return `${MAP.find(([min]) => mbps >= min)[1]} (${m[1]} ${m[2]})`;
+    const num = m[1] || m[3], unit = m[2] || m[4];
+    let mbps = parseFloat(num);
+    if (/kbps/i.test(unit)) mbps /= 1000;
+    return `${MAP.find(([min]) => mbps >= min)[1]} (${num} ${unit})`;
   }
-  function fix(root) {
-    root.querySelectorAll('select.selectVideoQuality option').forEach(o => {
+
+  function fix() {
+    document.querySelectorAll('select.selectVideoQuality option').forEach(o => {
       const t = label(o.textContent); if (t) o.textContent = t;
     });
-    root.querySelectorAll('.actionSheetContent .listItemBodyText, .actionSheetContent .actionSheetItemText').forEach(el => {
-      const t = label(el.textContent); if (t) el.textContent = t;
+    document.querySelectorAll(SCOPE).forEach(scope => {
+      scope.querySelectorAll('*').forEach(el => {
+        if (el.children.length) return;
+        const t = label(el.textContent);
+        if (t) el.textContent = t;
+      });
     });
   }
-  new MutationObserver(muts => {
-    for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) fix(n);
-  }).observe(document.body, { childList: true, subtree: true });
+
+  let queued = false;
+  new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; fix(); });
+  }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  fix();
 })();
 EOF
 
