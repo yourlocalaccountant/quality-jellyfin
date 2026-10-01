@@ -9,32 +9,46 @@ for d in "${DIRS[@]}"; do [ -f "$d/index.html" ] && WEB="$d" && break; done
 
 cat > "$WEB/quality-labels.js" <<'EOF'
 (function () {
-  const MAP = [[40,'4K'],[15,'1440p'],[8,'1080p'],[4,'720p'],[1.5,'480p'],[0.5,'360p'],[0,'240p']];
-  const EXACT = /^\s*(\d+(?:\.\d+)?)\s*(Mbps|Kbps)\s*$/i;
+  const LADDER = /^\s*(4K|\d{3,4}p) - (\d+(?:\.\d+)?) (Mbps|kbps)\s*$/i;
+  const BARE = /^\s*(\d+(?:\.\d+)?) (Mbps|kbps)\s*$/i;
+
+  function resolution() {
+    const v = document.querySelector('video');
+    if (!v || !v.videoWidth) return null;
+    const w = v.videoWidth, h = v.videoHeight;
+    if (w >= 3800 || h >= 2160) return '4K';
+    if (w >= 1900 || h >= 1080) return '1080p';
+    if (w >= 1260 || h >= 720) return '720p';
+    if (w >= 620 || h >= 480) return '480p';
+    if (h >= 360) return '360p';
+    if (h >= 240) return '240p';
+    return '144p';
+  }
 
   function inQualityRow(node) {
     let el = node.parentElement;
     for (let i = 0; el && i < 4; i++, el = el.parentElement) {
-      if (/^\s*Quality\b/i.test(el.textContent)) return true;
+      const t = el.textContent.trim();
+      if (t.length < 40 && /^Quality\b/i.test(t)) return true;
     }
     return false;
   }
 
   function fix() {
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    const hits = [];
-    while (walker.nextNode()) {
-      const n = walker.currentNode;
-      if (EXACT.test(n.nodeValue)) hits.push(n);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const n of nodes) {
+      const s = n.nodeValue;
+      if (s.length > 40) continue;
+      let m = s.match(LADDER);
+      if (m) { n.nodeValue = `${m[1]} (${m[2]} ${m[3]})`; continue; }
+      m = s.match(BARE);
+      if (m && inQualityRow(n)) {
+        const r = resolution();
+        if (r) n.nodeValue = `${r} (${m[1]} ${m[2]})`;
+      }
     }
-    hits.forEach(n => {
-      const isOption = n.parentElement && n.parentElement.tagName === 'OPTION';
-      if (!isOption && !inQualityRow(n)) return;
-      const m = n.nodeValue.match(EXACT);
-      let mbps = parseFloat(m[1]);
-      if (/kbps/i.test(m[2])) mbps /= 1000;
-      n.nodeValue = `${MAP.find(([min]) => mbps >= min)[1]} (${m[1]} ${m[2]})`;
-    });
   }
 
   let queued = false;
@@ -47,8 +61,7 @@ cat > "$WEB/quality-labels.js" <<'EOF'
 })();
 EOF
 
-if ! grep -q 'quality-labels.js' "$WEB/index.html"; then
-  sed -i 's#</body>#<script src="quality-labels.js"></script></body>#' "$WEB/index.html"
-fi
+sed -i -E 's#<script src="quality-labels\.js[^"]*"></script>##g' "$WEB/index.html"
+sed -i "s#</body>#<script src=\"quality-labels.js?v=$(date +%s)\"></script></body>#" "$WEB/index.html"
 
 echo "Installed. Hard refresh your browser (Ctrl+Shift+R)."
