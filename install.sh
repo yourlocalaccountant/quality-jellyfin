@@ -170,6 +170,8 @@ else
   exit 1
 fi
 
-CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8096/web/quality-labels.js" || true)
-echo "Server check: HTTP ${CODE:-n/a} (200 means Jellyfin is serving the script)"
+PORT=$(ss -tlnp 2>/dev/null | grep -i jellyfin | awk '{print $4}' | sed 's/.*://' | head -1)
+PORT=${PORT:-8096}
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/web/quality-labels.js" || true)
+echo "Server check: HTTP ${CODE:-n/a} on port ${PORT} (200 means Jellyfin is serving the script)"
 echo "Done. Hard refresh your browser (Ctrl+Shift+R)."
