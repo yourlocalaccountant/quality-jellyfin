@@ -20,87 +20,96 @@ cp -n "$WEB/index.html" "$WEB/index.html.bak-quality" 2>/dev/null || true
 cat > "$WEB/quality-labels.js" <<'EOF'
 (function () {
   'use strict';
-  var VERSION = 'v4';
-  if (window.__qualityLabelsLoaded) return;
-  window.__qualityLabelsLoaded = true;
+  var VERSION = 'v5';
+  if (window.__qualityLabelsVersion === VERSION) return;
+  window.__qualityLabelsVersion = VERSION;
 
-  // "1080p - 10 Mbps" (Jellyfin's own names) and bare "4 Mbps" (settings row)
-  var LADDER = /^\s*(4K|\d{3,4}p) - (\d+(?:\.\d+)?) ?(Mbps|kbps)\s*$/i;
-  var BARE = /^\s*(\d+(?:\.\d+)?) ?(Mbps|kbps)\s*$/i;
-  var DONE = /^\s*(4K|\d{3,4}p) \(\d/i;
+  // [minimum Mbps, label]. Edit this table to change which resolution each bitrate gets.
+  var MAP = [
+    [80,  '4K'],
+    [5,   '1080p'],
+    [1.5, '720p'],
+    [0.4, '480p'],
+    [0.3, '360p'],
+    [0,   '240p']
+  ];
 
-  // Only used when no video is playing, so it is approximate
-  var FALLBACK = [[80, '4K'], [8, '1080p'], [1.5, '720p'], [0.4, '480p'], [0.3, '360p'], [0, '240p']];
+  var BARE = /^\s*(\d+(?:\.\d+)?)\s*(Mbps|kbps)\s*$/i;
+  var LADDER = /^\s*(4K|\d{3,4}p)\s*-\s*(\d+(?:\.\d+)?)\s*(Mbps|kbps)\s*$/i;
+  var DONE = /^\s*(4K|\d{3,4}p)\s*\(/i;
 
-  function fmtRes(w, h) {
-    if (w >= 3800 || h >= 2160) return '4K';
-    if (w >= 1900 || h >= 1080) return '1080p';
-    if (w >= 1260 || h >= 720) return '720p';
-    if (w >= 620 || h >= 480) return '480p';
-    if (h >= 360) return '360p';
-    if (h >= 240) return '240p';
-    return '144p';
-  }
-
-  function currentResolution() {
-    var v = document.querySelector('video');
-    if (v && v.videoWidth) return fmtRes(v.videoWidth, v.videoHeight);
-    return null;
-  }
-
-  function toMbps(num, unit) {
-    var n = parseFloat(num);
-    return /kbps/i.test(unit) ? n / 1000 : n;
-  }
-
-  function fallbackRes(mbps) {
-    for (var i = 0; i < FALLBACK.length; i++) {
-      if (mbps >= FALLBACK[i][0]) return FALLBACK[i][1];
+  function resFor(mbps) {
+    for (var i = 0; i < MAP.length; i++) {
+      if (mbps >= MAP[i][0]) return MAP[i][1];
     }
-    return '240p';
+    return MAP[MAP.length - 1][1];
   }
 
-  function inQualityRow(node) {
+  function toMbps(n, unit) {
+    var v = parseFloat(n);
+    return /kbps/i.test(unit) ? v / 1000 : v;
+  }
+
+  function squash(el) {
+    return (el.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  // The "Quality   4 Mbps" row in the main settings menu
+  function isQualityRow(node) {
     var el = node.parentElement;
     for (var i = 0; el && i < 5; i++, el = el.parentElement) {
-      var t = (el.textContent || '').trim();
+      var t = squash(el);
       if (t.length < 40 && /^Quality\b/i.test(t)) return true;
     }
     return false;
   }
 
-  function inQualitySelect(node) {
-    var p = node.parentElement;
-    if (!p || p.tagName !== 'OPTION') return false;
-    var sel = p.closest('select');
-    return !!sel && /quality/i.test((sel.className || '') + ' ' + (sel.id || '') + ' ' + (sel.name || ''));
+  // The submenu / dropdown that contains nothing but "Auto" and bitrates
+  function isQualityList(node) {
+    var el = node.parentElement;
+    for (var i = 0; el && i < 8; i++, el = el.parentElement) {
+      var t = squash(el);
+      if (t.length > 300) return false;
+      var hits = t.match(/(\d+(?:\.\d+)?)\s*(Mbps|kbps)/gi);
+      if (!hits || hits.length < 2) continue;
+      var rest = t
+        .replace(/(\d+(?:\.\d+)?)\s*(Mbps|kbps)/gi, '')
+        .replace(/\b(4K|\d{3,4}p)\b/gi, '')
+        .replace(/\b(Auto|check|done)\b/gi, '')
+        .replace(/[^A-Za-z0-9]/g, '');
+      if (rest.length === 0) return true;
+    }
+    return false;
   }
 
-  function rewrite(node) {
+  function plan(node) {
     var s = node.nodeValue;
-    if (!s || s.length > 40 || DONE.test(s)) return;
+    if (!s || s.length > 40 || DONE.test(s)) return null;
     var p = node.parentElement;
-    if (!p || /^(SCRIPT|STYLE|TEXTAREA)$/.test(p.tagName)) return;
+    if (!p || /^(SCRIPT|STYLE|TEXTAREA|INPUT)$/.test(p.tagName)) return null;
 
     var m = s.match(LADDER);
-    if (m) {
-      node.nodeValue = m[1] + ' (' + m[2] + ' ' + m[3] + ')';
-      return;
-    }
+    if (m) return m[1] + ' (' + m[2] + ' ' + m[3] + ')';
 
     m = s.match(BARE);
-    if (m && (inQualitySelect(node) || inQualityRow(node))) {
-      var res = currentResolution() || fallbackRes(toMbps(m[1], m[2]));
-      node.nodeValue = res + ' (' + m[1] + ' ' + m[2] + ')';
+    if (m && (isQualityRow(node) || isQualityList(node))) {
+      return resFor(toMbps(m[1], m[2])) + ' (' + m[1] + ' ' + m[2] + ')';
     }
+    return null;
   }
 
   function scan() {
-    if (!document.body) return;
+    if (!document.body) return 0;
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-    var list = [];
-    while (walker.nextNode()) list.push(walker.currentNode);
-    for (var i = 0; i < list.length; i++) rewrite(list[i]);
+    var jobs = [];
+    // Decide everything first, then change the page, so edits can't affect detection
+    while (walker.nextNode()) {
+      var n = walker.currentNode;
+      var out = plan(n);
+      if (out !== null && out !== n.nodeValue) jobs.push([n, out]);
+    }
+    for (var i = 0; i < jobs.length; i++) jobs[i][0].nodeValue = jobs[i][1];
+    return jobs.length;
   }
 
   var queued = false;
@@ -113,7 +122,7 @@ cat > "$WEB/quality-labels.js" <<'EOF'
     });
   }
 
-  // Run this in the browser console if a label does not change
+  // Run qualityLabelsDebug() in the browser console to see every bitrate text on screen
   window.qualityLabelsDebug = function () {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
     var out = [];
@@ -125,19 +134,20 @@ cat > "$WEB/quality-labels.js" <<'EOF'
           text: n.nodeValue.trim(),
           tag: p.tagName,
           cls: p.className,
-          row: p.parentElement ? p.parentElement.textContent.trim().slice(0, 60) : '',
-          html: p.outerHTML.slice(0, 200)
+          row: isQualityRow(n),
+          list: isQualityList(n),
+          html: p.outerHTML.slice(0, 160)
         });
       }
     }
-    var v = document.querySelector('video');
-    console.log('[quality-labels] video:', v ? v.videoWidth + 'x' + v.videoHeight : 'none');
     console.table(out);
     return out;
   };
 
   function start() {
-    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
+    new MutationObserver(schedule).observe(document.body, {
+      childList: true, subtree: true, characterData: true
+    });
     setInterval(schedule, 1000);
     schedule();
     console.log('[quality-labels] ' + VERSION + ' loaded');
